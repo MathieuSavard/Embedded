@@ -10,6 +10,7 @@ void *task(void *arg);
 
 void print_cpu_usage(void);
 void print_ram_usage(void);
+void print_swap_usage(void);
 void print_network_usage(void);
 void print_disk_usage(void);
 void print_temperatures(void);
@@ -52,14 +53,17 @@ void *task(void *arg) {
 
   while (true) {
     print_cpu_usage();
-    print_ram_usage();
-    print_network_usage();
-    print_disk_usage();
-    print_temperatures();
-    print_up_time();
+    // print_ram_usage();
+    // print_swap_usage();
+    // print_network_usage();
+    // print_disk_usage();
+    // print_temperatures();
+    // print_up_time();
     printf("\n");
 
-    getchar();
+    sleep(4);
+
+    // getchar();
   }
 
   pthread_exit(NULL);
@@ -67,6 +71,7 @@ void *task(void *arg) {
 
 void print_cpu_usage() {
   double cpu_usage = 0;
+
 
   size_t entries = 0;
 
@@ -95,6 +100,21 @@ void print_ram_usage() {
   ram_usage /= 1000;
   ram_total /= 1000;
   printf("RAM Usage: %.3f/%.3f GB\n", ram_usage, ram_total);
+
+  // sg_free_stats_buf(mem_stats);
+
+  fflush(stdout);
+}
+
+void print_swap_usage() {
+  double swap_usage = 0;
+  double swap_total = 0;
+
+  size_t entries = 0;
+
+  sg_mem_stats *mem_stats = sg_get_mem_stats(&entries);
+
+  printf("Swap Usage: %.3f/%.3f GB\n", swap_usage, swap_total);
 
   // sg_free_stats_buf(mem_stats);
 
