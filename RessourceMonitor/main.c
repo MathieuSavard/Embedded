@@ -1,9 +1,11 @@
 #include <pthread.h>
-#include <statgrab.h>
 #include <stdbool.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 #include <unistd.h>
+
+#include "binary_value.h"
 
 int start_display_ressources(void);
 void *task(void *arg);
@@ -46,130 +48,120 @@ int start_display_ressources() {
 }
 
 void *task(void *arg) {
-  if (SG_ERROR_NONE != sg_init(1)) {
-    printf("Failed to initialize StatGrab\n");
-    pthread_exit(NULL);
-  }
-
   while (true) {
     print_cpu_usage();
-    // print_ram_usage();
-    // print_swap_usage();
-    // print_network_usage();
-    // print_disk_usage();
-    // print_temperatures();
-    // print_up_time();
+    print_ram_usage();
+    print_swap_usage();
+    print_network_usage();
+    print_disk_usage();
+    print_temperatures();
+    print_up_time();
     printf("\n");
 
-    sleep(4);
-
-    // getchar();
+    sleep(1);
   }
 
   pthread_exit(NULL);
 }
 
 void print_cpu_usage() {
-  double cpu_usage = 0;
+  static bool first_pass_init = true;
+  static unsigned long long prev_idle = 0;
+  static unsigned long long prev_total = 0;
 
+  unsigned long long user = 0;
+  unsigned long long nice = 0;
+  unsigned long long system = 0;
+  unsigned long long idle = 0;
+  unsigned long long iowait = 0;
+  unsigned long long irq = 0;
+  unsigned long long softirq = 0;
+  unsigned long long total = 0;
 
-  size_t entries = 0;
+  FILE *file = fopen("/proc/stat", "r");
+  if (file == NULL) {
+    printf("Error opening file \"/proc/stat\"\n");
+    return;
+  }
 
-  sg_cpu_percents *cpu_percents =
-      sg_get_cpu_percents_of(sg_new_diff_cpu_percent, &entries);
+  if (fscanf(file, "cpu %llu %llu %llu %llu %llu %llu %llu", &user, &nice,
+             &system, &idle, &iowait, &irq, &softirq) != 7) {
+    printf("Failed to parse CPU statistics\n");
+    return;
+  }
+  fclose(file);
 
-  cpu_usage = 100.0f - cpu_percents->idle;
-  printf("CPU Usage: %.2f%%\n", cpu_usage);
+  total = user + nice + system + idle + iowait + irq + softirq;
 
-  // sg_free_stats_buf(cpu_percents);
+  if (!first_pass_init) {
+    printf("CPU: %.2f%%\n",
+           100.0 * (1.0 - (double)((idle + iowait) - prev_idle) /
+                              (total - prev_total)));
+  }
+
+  prev_idle = idle + iowait;
+  prev_total = total;
+
+  first_pass_init = false;
 
   fflush(stdout);
 }
 
 void print_ram_usage() {
-  double ram_usage = 0;
-  double ram_total = 0;
+  char bufferX[32] = {};
+  Binary_Value total = {0, "kB"};
+  Binary_Value free = {0, "kB"};
+  Binary_Value buffer = {0, "kB"};
+  Binary_Value cache = {0, "kB"};
+  Binary_Value slab = {0, "kB"};
+  Binary_Value used = {0, "kB"};
 
-  size_t entries = 0;
-
-  sg_mem_stats *mem_stats = sg_get_mem_stats(&entries);
-
-  ram_usage = mem_stats->used / 1000000;
-  ram_total = mem_stats->total / 1000000;
-
-  ram_usage /= 1000;
-  ram_total /= 1000;
-  printf("RAM Usage: %.3f/%.3f GB\n", ram_usage, ram_total);
-
-  // sg_free_stats_buf(mem_stats);
-
-  fflush(stdout);
-}
-
-void print_swap_usage() {
-  double swap_usage = 0;
-  double swap_total = 0;
-
-  size_t entries = 0;
-
-  sg_mem_stats *mem_stats = sg_get_mem_stats(&entries);
-
-  printf("Swap Usage: %.3f/%.3f GB\n", swap_usage, swap_total);
-
-  // sg_free_stats_buf(mem_stats);
-
-  fflush(stdout);
-}
-
-void print_network_usage() {
-  double network_download = 0;
-  double network_upload = 0;
-
-  size_t entries = 0;
-
-  sg_network_io_stats *network_stats = sg_get_network_io_stats_diff(&entries);
-
-  for (uint32_t i = 0; i < entries; i++) {
-    network_download = network_stats[i].rx / 1024;
-    network_upload = network_stats[i].tx / 1024;
-    network_download /= 1;
-    network_upload /= 1;
-    printf("Network\tDownload: %.3f kbps\tUpload: %.3f kbps\n",
-           network_download, network_upload);
+  FILE *file = fopen("/proc/meminfo", "r");
+  if (file == NULL) {
+    printf("Error opening file \"/proc/meminfo\"\n");
+    return;
   }
 
-  // sg_free_stats_buf(network_stats);
+  while (true) {
+    memset(bufferX, 0, sizeof(bufferX));
+    if (fgets(bufferX, sizeof(bufferX), file) == NULL)
+      break;
+
+    if (strncmp(bufferX, "MemTotal", strlen("MemTotal")) == 0)
+      sscanf(bufferX, "MemTotal: %Lf kB", &total.value);
+
+    if (strncmp(bufferX, "MemFree", strlen("MemFree")) == 0)
+      sscanf(bufferX, "MemFree: %Lf kB", &free.value);
+
+    if (strncmp(bufferX, "Buffers", strlen("Buffers")) == 0)
+      sscanf(bufferX, "Buffers: %Lf kB", &buffer.value);
+
+    if (strncmp(bufferX, "Slab", strlen("Slab")) == 0)
+      sscanf(bufferX, "Slab: %Lf kB", &slab.value);
+
+    if (strncmp(bufferX, "Cached", strlen("Cached")) == 0)
+      sscanf(bufferX, "Cached: %Lf kB", &cache.value);
+  }
+
+  fclose(file);
+
+  used.value =
+      total.value - free.value - buffer.value - cache.value - slab.value;
+
+  bv_format(&total);
+  bv_format(&used);
+
+  printf("RAM: %.3Lf %s/%.3Lf %s\n", used.value, used.prefixe, total.value,
+         total.prefixe);
 
   fflush(stdout);
 }
 
-void print_disk_usage() {
-  double fs_used = 0;
-  double fs_size = 0;
-  double fs_free = 0;
-  double fs_available = 0;
+void print_swap_usage() {}
 
-  size_t entries = 0;
+void print_network_usage() {}
 
-  sg_fs_stats *fs_stats = sg_get_fs_stats_diff(&entries);
-
-  fs_used = fs_stats->used / 1000;
-  fs_size = fs_stats->size / 1000;
-  fs_free = fs_stats->free / 1000;
-  fs_available = fs_stats->avail / 1000;
-
-  fs_used /= 1;
-  fs_size /= 1;
-  fs_free /= 1;
-  fs_available /= 1;
-
-  printf("Disk\tUsed: %lld\tSize: %lld\tFree: %lld\tAvailable: %lld\n",
-         fs_stats->used, fs_stats->size, fs_stats->free, fs_stats->avail);
-
-  // sg_free_stats_buf(mem_stats);
-
-  fflush(stdout);
-}
+void print_disk_usage() {}
 
 void print_temperatures() {}
 
