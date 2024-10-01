@@ -201,14 +201,14 @@ void print_network_usage() {
   fclose(file);
 
   if (!first_pass_init) {
-    rx.value = rx_bytes_total - prev_rx_bytes_total;
-    tx.value = tx_bytes_total - prev_tx_bytes_total;
+    rx.value = (rx_bytes_total - prev_rx_bytes_total) / PERIOD;
+    tx.value = (tx_bytes_total - prev_tx_bytes_total) / PERIOD;
 
     bv_format(&rx);
     bv_format(&tx);
 
-    printf("Network: R:%.3Lf %s S:%.3Lf %s\n", rx.value, rx.prefixe, tx.value,
-           tx.prefixe);
+    printf("Network: R:%.3Lf %s/s\tS:%.3Lf %s/s\n", rx.value, rx.prefixe,
+           tx.value, tx.prefixe);
   }
 
   prev_rx_bytes_total = rx_bytes_total;
