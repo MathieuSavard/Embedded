@@ -7,12 +7,13 @@
 
 #include "binary_value.h"
 
+#define PERIOD 1U
+
 int start_display_ressources(void);
 void *task(void *arg);
 
 void print_cpu_usage(void);
 void print_ram_usage(void);
-void print_swap_usage(void);
 void print_network_usage(void);
 void print_disk_usage(void);
 void print_temperatures(void);
@@ -51,14 +52,13 @@ void *task(void *arg) {
   while (true) {
     print_cpu_usage();
     print_ram_usage();
-    print_swap_usage();
     print_network_usage();
     print_disk_usage();
     print_temperatures();
     print_up_time();
     printf("\n");
 
-    sleep(1);
+    sleep(PERIOD);
   }
 
   pthread_exit(NULL);
@@ -93,13 +93,11 @@ void print_cpu_usage() {
 
   total = user + nice + system + idle + iowait + irq + softirq;
 
-  if (!first_pass_init) {
+  if (!first_pass_init)
     printf("CPU: %.2f%%\n",
-           100.0 * (1.0 - (double)((idle + iowait) - prev_idle) /
-                              (total - prev_total)));
-  }
+           100.0 * (1.0 - (double)((idle)-prev_idle) / (total - prev_total)));
 
-  prev_idle = idle + iowait;
+  prev_idle = idle;
   prev_total = total;
 
   first_pass_init = false;
@@ -108,13 +106,15 @@ void print_cpu_usage() {
 }
 
 void print_ram_usage() {
-  char bufferX[32] = {};
-  Binary_Value total = {0, "kB"};
-  Binary_Value free = {0, "kB"};
-  Binary_Value buffer = {0, "kB"};
-  Binary_Value cache = {0, "kB"};
-  Binary_Value slab = {0, "kB"};
-  Binary_Value used = {0, "kB"};
+  char buffer[128] = {};
+
+  Binary_Value ram_total = {0, "kB"};
+  Binary_Value ram_available = {0, "kB"};
+  Binary_Value ram_used = {0, "kB"};
+
+  Binary_Value swap_total = {0, "kB"};
+  Binary_Value swap_free = {0, "kB"};
+  Binary_Value swap_used = {0, "kB"};
 
   FILE *file = fopen("/proc/meminfo", "r");
   if (file == NULL) {
@@ -123,43 +123,101 @@ void print_ram_usage() {
   }
 
   while (true) {
-    memset(bufferX, 0, sizeof(bufferX));
-    if (fgets(bufferX, sizeof(bufferX), file) == NULL)
+    memset(buffer, 0, sizeof(buffer));
+    if (fgets(buffer, sizeof(buffer), file) == NULL)
       break;
 
-    if (strncmp(bufferX, "MemTotal", strlen("MemTotal")) == 0)
-      sscanf(bufferX, "MemTotal: %Lf kB", &total.value);
+    if (strncmp(buffer, "MemTotal", strlen("MemTotal")) == 0)
+      sscanf(buffer, "MemTotal: %Lf kB", &ram_total.value);
 
-    if (strncmp(bufferX, "MemFree", strlen("MemFree")) == 0)
-      sscanf(bufferX, "MemFree: %Lf kB", &free.value);
+    if (strncmp(buffer, "MemAvailable", strlen("MemAvailable")) == 0)
+      sscanf(buffer, "MemAvailable: %Lf kB", &ram_available.value);
 
-    if (strncmp(bufferX, "Buffers", strlen("Buffers")) == 0)
-      sscanf(bufferX, "Buffers: %Lf kB", &buffer.value);
+    if (strncmp(buffer, "SwapTotal", strlen("SwapTotal")) == 0)
+      sscanf(buffer, "SwapTotal: %Lf kB", &swap_total.value);
 
-    if (strncmp(bufferX, "Slab", strlen("Slab")) == 0)
-      sscanf(bufferX, "Slab: %Lf kB", &slab.value);
-
-    if (strncmp(bufferX, "Cached", strlen("Cached")) == 0)
-      sscanf(bufferX, "Cached: %Lf kB", &cache.value);
+    if (strncmp(buffer, "SwapFree", strlen("SwapFree")) == 0)
+      sscanf(buffer, "SwapFree: %Lf kB", &swap_free.value);
   }
 
   fclose(file);
 
-  used.value =
-      total.value - free.value - buffer.value - cache.value - slab.value;
+  ram_used.value = ram_total.value - ram_available.value;
 
-  bv_format(&total);
-  bv_format(&used);
+  bv_format(&ram_total);
+  bv_format(&ram_used);
 
-  printf("RAM: %.3Lf %s/%.3Lf %s\n", used.value, used.prefixe, total.value,
-         total.prefixe);
+  swap_used.value = swap_total.value - swap_free.value;
+
+  bv_format(&swap_total);
+  bv_format(&swap_used);
+
+  printf("RAM: %.3Lf %s/%.3Lf %s\n", ram_used.value, ram_used.prefixe,
+         ram_total.value, ram_total.prefixe);
+
+  if (swap_used.value)
+    printf("Swap: %.3Lf %s/%.3Lf %s\n", swap_used.value, swap_used.prefixe,
+           swap_total.value, swap_total.prefixe);
 
   fflush(stdout);
 }
 
-void print_swap_usage() {}
+void print_network_usage() {
+  static bool first_pass_init = true;
+  static unsigned long prev_rx_bytes_total = 0;
+  static unsigned long prev_tx_bytes_total = 0;
 
-void print_network_usage() {}
+  char buffer[128] = {};
+  char interface[16] = {};
+
+  unsigned long rx_bytes = 0;
+  unsigned long tx_bytes = 0;
+
+  unsigned long rx_bytes_total = 0;
+  unsigned long tx_bytes_total = 0;
+
+  Binary_Value rx = {0, "B"};
+  Binary_Value tx = {0, "B"};
+
+  FILE *file = fopen("/proc/net/dev", "r");
+  if (file == NULL) {
+    printf("Error opening file \"/proc/net/dev\"\n");
+    return;
+  }
+
+  while (true) {
+    memset(buffer, 0, sizeof(buffer));
+    if (fgets(buffer, sizeof(buffer), file) == NULL)
+      break;
+
+    if (sscanf(buffer, "%s %lu %*u %*u %*u %*u %*u %*u %*u %lu", interface,
+               &rx_bytes, &tx_bytes) == 3)
+      if (strcmp(interface, "lo:") != 0) {
+        rx_bytes_total += rx_bytes;
+        tx_bytes_total += tx_bytes;
+      }
+  }
+
+  fclose(file);
+
+  if (!first_pass_init) {
+    rx.value = rx_bytes_total - prev_rx_bytes_total;
+    tx.value = tx_bytes_total - prev_tx_bytes_total;
+
+    bv_format(&rx);
+    bv_format(&tx);
+
+    printf("Network: R:%.3Lf %s S:%.3Lf %s\n", rx.value, rx.prefixe, tx.value,
+           tx.prefixe);
+  }
+
+  prev_rx_bytes_total = rx_bytes_total;
+  prev_tx_bytes_total = tx_bytes_total;
+
+  first_pass_init = false;
+
+  fflush(stdout);
+}
 
 void print_disk_usage() {}
 
