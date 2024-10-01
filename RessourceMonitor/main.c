@@ -108,13 +108,15 @@ void print_cpu_usage() {
 void print_ram_usage() {
   char buffer[128] = {};
 
-  Binary_Value ram_total = {0, "kB"};
-  Binary_Value ram_available = {0, "kB"};
-  Binary_Value ram_used = {0, "kB"};
+  BinVal bv_ram_total;
+  BinVal bv_ram_used;
+  BinVal bv_swap_total;
+  BinVal bv_swap_used;
 
-  Binary_Value swap_total = {0, "kB"};
-  Binary_Value swap_free = {0, "kB"};
-  Binary_Value swap_used = {0, "kB"};
+  long double ram_total;
+  long double ram_available;
+  long double swap_total;
+  long double swap_free;
 
   FILE *file = fopen("/proc/meminfo", "r");
   if (file == NULL) {
@@ -128,36 +130,39 @@ void print_ram_usage() {
       break;
 
     if (strncmp(buffer, "MemTotal", strlen("MemTotal")) == 0)
-      sscanf(buffer, "MemTotal: %Lf kB", &ram_total.value);
+      sscanf(buffer, "MemTotal:  %Lf kB", &ram_total);
 
     if (strncmp(buffer, "MemAvailable", strlen("MemAvailable")) == 0)
-      sscanf(buffer, "MemAvailable: %Lf kB", &ram_available.value);
+      sscanf(buffer, "MemAvailable: %Lf kB", &ram_available);
 
     if (strncmp(buffer, "SwapTotal", strlen("SwapTotal")) == 0)
-      sscanf(buffer, "SwapTotal: %Lf kB", &swap_total.value);
+      sscanf(buffer, "SwapTotal: %Lf kB", &swap_total);
 
     if (strncmp(buffer, "SwapFree", strlen("SwapFree")) == 0)
-      sscanf(buffer, "SwapFree: %Lf kB", &swap_free.value);
+      sscanf(buffer, "SwapFree: %Lf kB", &swap_free);
   }
 
   fclose(file);
 
-  ram_used.value = ram_total.value - ram_available.value;
+  bv_init(&bv_ram_total, ram_total, BV_kB);
+  bv_init(&bv_ram_used, ram_total - ram_available, BV_kB);
 
-  bv_format(&ram_total);
-  bv_format(&ram_used);
+  bv_init(&bv_swap_total, swap_total, BV_kB);
+  bv_init(&bv_swap_used, swap_total - swap_free, BV_kB);
 
-  swap_used.value = swap_total.value - swap_free.value;
+  printf("RAM: ");
+  bv_print_value_prefix(&bv_ram_used);
+  printf("/");
+  bv_print_value_prefix(&bv_ram_total);
+  printf("\n");
 
-  bv_format(&swap_total);
-  bv_format(&swap_used);
-
-  printf("RAM: %.3Lf %s/%.3Lf %s\n", ram_used.value, ram_used.prefixe,
-         ram_total.value, ram_total.prefixe);
-
-  if (swap_used.value)
-    printf("Swap: %.3Lf %s/%.3Lf %s\n", swap_used.value, swap_used.prefixe,
-           swap_total.value, swap_total.prefixe);
+  if (swap_free != swap_total) {
+    printf("Swap: ");
+    bv_print_value_prefix(&bv_swap_used);
+    printf("/");
+    bv_print_value_prefix(&bv_swap_total);
+    printf("\n");
+  }
 
   fflush(stdout);
 }
@@ -176,8 +181,8 @@ void print_network_usage() {
   unsigned long rx_bytes_total = 0;
   unsigned long tx_bytes_total = 0;
 
-  Binary_Value rx = {0, "B"};
-  Binary_Value tx = {0, "B"};
+  BinVal rx;
+  BinVal tx;
 
   FILE *file = fopen("/proc/net/dev", "r");
   if (file == NULL) {
@@ -201,14 +206,14 @@ void print_network_usage() {
   fclose(file);
 
   if (!first_pass_init) {
-    rx.value = (rx_bytes_total - prev_rx_bytes_total) / PERIOD;
-    tx.value = (tx_bytes_total - prev_tx_bytes_total) / PERIOD;
+    bv_init(&rx, (rx_bytes_total - prev_rx_bytes_total) / PERIOD, BV_B);
+    bv_init(&tx, (tx_bytes_total - prev_tx_bytes_total) / PERIOD, BV_B);
 
-    bv_format(&rx);
-    bv_format(&tx);
-
-    printf("Network: R:%.3Lf %s/s\tS:%.3Lf %s/s\n", rx.value, rx.prefixe,
-           tx.value, tx.prefixe);
+    printf("Network:\tD: ");
+    bv_print_value_prefix(&rx);
+    printf("/s\tU: ");
+    bv_print_value_prefix(&tx);
+    printf("/s\n");
   }
 
   prev_rx_bytes_total = rx_bytes_total;

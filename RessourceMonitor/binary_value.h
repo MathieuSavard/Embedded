@@ -1,15 +1,19 @@
 #ifndef BINARY_VALUE_H
 #define BINARY_VALUE_H
 
+#include <limits.h>
 #include <stdbool.h>
 
-#define PREFIX_MAX_CHAR_LENGTH 4
+typedef enum { BV_B, BV_kB, BV_MB, BV_GB, BV_TB, BV_PB, BV_EB } BVPrefix;
 
-typedef struct Binary_Value {
+typedef struct BinVal {
   long double value;
-  char prefixe[PREFIX_MAX_CHAR_LENGTH];
-} Binary_Value;
+  BVPrefix prefix;
+} BinVal;
 
-bool bv_format(Binary_Value *binary_value);
+bool bv_init(BinVal *bv, long double value, BVPrefix prefix);
+void bv_print_value(const BinVal *bv);
+void bv_print_prefix(const BinVal *bv);
+void bv_print_value_prefix(const BinVal *bv);
 
 #endif
